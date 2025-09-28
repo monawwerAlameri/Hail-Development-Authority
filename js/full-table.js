@@ -5,6 +5,27 @@ let currentPage = 1;
 let pageSize = 25;
 let sortColumn = null;
 let sortDirection = 'asc';
+const currentDateSerial = 45928; // 2025-09-28
+
+// دالة تحويل تسلسلي إلى تاريخ
+function excelSerialToDate(serial) {
+    if (isNaN(serial) || serial === '' || serial === 'مستمرة' || /L\d+|A\d+/.test(serial)) {
+        return serial || '-'; // الاحتفاظ بالقيمة الأصلية
+    }
+    const utc_days = Math.floor(serial - 25569);
+    const utc_value = utc_days * 86400;
+    const date_info = new Date(utc_value * 1000);
+    if (isNaN(date_info.getTime())) return serial || '-';
+    const year = date_info.getFullYear();
+    const month = String(date_info.getMonth() + 1).padStart(2, '0');
+    const day = String(date_info.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`; // عرض كما في الملف
+}
+// تنسيق التاريخ للعرض
+// تنسيق التاريخ للعرض (بدون تحويل إلى هجري)
+function formatDate(dateString) {
+    return dateString || '-'; // الاحتفاظ بالقيمة الأصلية
+}
 
 // عند تحميل الصفحة
 document.addEventListener('DOMContentLoaded', function() {
@@ -13,26 +34,30 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // تهيئة الجدول
+// تهيئة الجدول
 function initializeTable() {
-    // محاولة تحميل البيانات من localStorage
     const storedData = localStorage.getItem('excelData');
-    
     if (storedData) {
         try {
             tableData = JSON.parse(storedData);
+            tableData.tasks.forEach(task => {
+                task['تاريخ  بدء المهمه'] = excelSerialToDate(task['تاريخ  بدء المهمه']);
+                task['التاريخ المتوقع لانهاء المهمة'] = excelSerialToDate(task['التاريخ المتوقع لانهاء المهمة']);
+                task['التاريخ الفعلي لانتهاء المهمة'] = excelSerialToDate(task['التاريخ الفعلي لانتهاء المهمة']);
+                const expectedSerial = parseFloat(task['التاريخ المتوقع لانهاء المهمة']);
+                if (!isNaN(expectedSerial) && expectedSerial < currentDateSerial && !task['الحالة'].includes('مكتمل')) {
+                    task['الحالة'] = 'متأخر';
+                }
+                if (!task['نسبة التقدم']) {
+                    task['نسبة التقدم'] = task['الحالة'].includes('مكتمل') ? 1 : task['الحالة'].includes('جاري') ? 0.5 : 0;
+                }
+            });
             filteredData = [...tableData.tasks];
-            
-            // تهيئة الفلاتر
             initializeFilters();
-            
-            // عرض الجدول
             renderTable();
-            
-            // تحديث معلومات النتائج
             updateResultsInfo();
-            
         } catch (error) {
-            console.error('خطأ في تحليل البيانات المحفوظة:', error);
+            console.error('خطأ في تحليل البيانات:', error);
             showNoDataState();
         }
     } else {
@@ -42,28 +67,22 @@ function initializeTable() {
 
 // إعداد مستمعي الأحداث
 function setupEventListeners() {
-    // البحث
     document.getElementById('searchInput').addEventListener('input', debounce(applyFilters, 300));
-    
-    // الفلاتر
     document.getElementById('departmentFilter').addEventListener('change', applyFilters);
     document.getElementById('statusFilter').addEventListener('change', applyFilters);
     document.getElementById('responsibleFilter').addEventListener('change', applyFilters);
     document.getElementById('startDateFrom').addEventListener('change', applyFilters);
     document.getElementById('startDateTo').addEventListener('change', applyFilters);
     
-    // فلتر نسبة التقدم
     const progressFilter = document.getElementById('progressFilter');
     progressFilter.addEventListener('input', function() {
         document.getElementById('progressValue').textContent = this.value + '%';
         applyFilters();
     });
     
-    // مسح الفلاتر
     document.getElementById('clearFilters').addEventListener('click', clearFilters);
     document.getElementById('resetFilters').addEventListener('click', clearFilters);
     
-    // حجم الصفحة
     document.getElementById('pageSize').addEventListener('change', function() {
         pageSize = this.value === 'all' ? filteredData.length : parseInt(this.value);
         currentPage = 1;
@@ -71,12 +90,10 @@ function setupEventListeners() {
         renderPagination();
     });
     
-    // أزرار التصدير
     document.getElementById('exportExcel').addEventListener('click', exportToExcel);
     document.getElementById('exportPDF').addEventListener('click', exportToPDF);
     document.getElementById('printTable').addEventListener('click', printTable);
     
-    // الترتيب
     document.querySelectorAll('.sortable').forEach(header => {
         header.addEventListener('click', function() {
             const column = this.dataset.column;
@@ -87,7 +104,6 @@ function setupEventListeners() {
 
 // تهيئة الفلاتر
 function initializeFilters() {
-    // فلتر الإدارات
     const departmentFilter = document.getElementById('departmentFilter');
     const departments = [...new Set(tableData.tasks.map(task => task['الإدارة']).filter(dept => dept))];
     
@@ -98,7 +114,6 @@ function initializeFilters() {
         departmentFilter.appendChild(option);
     });
     
-    // فلتر المسؤولين
     const responsibleFilter = document.getElementById('responsibleFilter');
     const responsiblePersons = [...new Set(tableData.tasks.map(task => task['المسؤول عن المهمه']).filter(person => person))];
     
@@ -121,48 +136,24 @@ function applyFilters() {
     const progressFilter = parseInt(document.getElementById('progressFilter').value) / 100;
     
     filteredData = tableData.tasks.filter(task => {
-        // فلتر البحث
-        if (searchTerm && !task['الموضوع/المهمة'].toLowerCase().includes(searchTerm)) {
-            return false;
-        }
+        if (searchTerm && !task['الموضوع/المهمة'].toLowerCase().includes(searchTerm)) return false;
+        if (departmentFilter && task['الإدارة'] !== departmentFilter) return false;
+        if (statusFilter && !task['الحالة'].includes(statusFilter)) return false;
+        if (responsibleFilter && task['المسؤول عن المهمه'] !== responsibleFilter) return false;
         
-        // فلتر الإدارة
-        if (departmentFilter && task['الإدارة'] !== departmentFilter) {
-            return false;
-        }
+        // فلتر التاريخ (محول)
+        const taskStart = new Date(task['تاريخ  بدء المهمه']);
+        if (startDateFrom && taskStart < new Date(startDateFrom)) return false;
+        if (startDateTo && taskStart > new Date(startDateTo)) return false;
         
-        // فلتر الحالة
-        if (statusFilter && !task['الحالة'].includes(statusFilter)) {
-            return false;
-        }
-        
-        // فلتر المسؤول
-        if (responsibleFilter && task['المسؤول عن المهمه'] !== responsibleFilter) {
-            return false;
-        }
-        
-        // فلتر تاريخ البدء
-        if (startDateFrom && task['تاريخ  بدء المهمه'] < startDateFrom) {
-            return false;
-        }
-        
-        if (startDateTo && task['تاريخ  بدء المهمه'] > startDateTo) {
-            return false;
-        }
-        
-        // فلتر نسبة التقدم
         const taskProgress = parseFloat(task['نسبة التقدم']) || 0;
-        if (taskProgress < progressFilter) {
-            return false;
-        }
+        if (taskProgress < progressFilter) return false;
         
         return true;
     });
     
-    // إعادة تعيين الصفحة الحالية
     currentPage = 1;
     
-    // عرض النتائج
     if (filteredData.length === 0) {
         showNoResults();
     } else {
@@ -171,7 +162,6 @@ function applyFilters() {
         renderPagination();
     }
     
-    // تحديث معلومات النتائج
     updateResultsInfo();
 }
 
@@ -185,8 +175,6 @@ function clearFilters() {
     document.getElementById('startDateTo').value = '';
     document.getElementById('progressFilter').value = '0';
     document.getElementById('progressValue').textContent = '0%';
-    
-    // إعادة تطبيق الفلاتر
     applyFilters();
 }
 
@@ -199,7 +187,6 @@ function handleSort(column) {
         sortDirection = 'asc';
     }
     
-    // تحديث أيقونات الترتيب
     document.querySelectorAll('.sortable').forEach(header => {
         header.classList.remove('sort-asc', 'sort-desc');
     });
@@ -207,33 +194,25 @@ function handleSort(column) {
     const currentHeader = document.querySelector(`[data-column="${column}"]`);
     currentHeader.classList.add(sortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
     
-    // ترتيب البيانات
     filteredData.sort((a, b) => {
         let valueA = a[column] || '';
         let valueB = b[column] || '';
         
-        // معالجة التواريخ
         if (column.includes('تاريخ')) {
             valueA = new Date(valueA);
             valueB = new Date(valueB);
         }
         
-        // معالجة الأرقام
         if (column === 'نسبة التقدم') {
             valueA = parseFloat(valueA) || 0;
             valueB = parseFloat(valueB) || 0;
         }
         
-        if (valueA < valueB) {
-            return sortDirection === 'asc' ? -1 : 1;
-        }
-        if (valueA > valueB) {
-            return sortDirection === 'asc' ? 1 : -1;
-        }
+        if (valueA < valueB) return sortDirection === 'asc' ? -1 : 1;
+        if (valueA > valueB) return sortDirection === 'asc' ? 1 : -1;
         return 0;
     });
     
-    // إعادة عرض الجدول
     renderTable();
 }
 
@@ -241,54 +220,39 @@ function handleSort(column) {
 function renderTable() {
     const tbody = document.getElementById('tableBody');
     tbody.innerHTML = '';
-    
-    // حساب البيانات للصفحة الحالية
     const startIndex = (currentPage - 1) * pageSize;
     const endIndex = pageSize === filteredData.length ? filteredData.length : startIndex + pageSize;
     const pageData = filteredData.slice(startIndex, endIndex);
     
     pageData.forEach((task, index) => {
         const row = document.createElement('tr');
+        const taskName = task['الموضوع/المهمة'].toLowerCase();
+        if (taskName.includes('efqm') || taskName.includes('iso')) row.classList.add('highlight-yellow');
+        else if (taskName.includes('خطة صرف')) row.classList.add('highlight-orange');
+        
         row.innerHTML = `
-            <td>
-                <div style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" 
-                     title="${task['الموضوع/المهمة'] || '-'}">
-                    ${highlightSearchTerm(task['الموضوع/المهمة'] || '-')}
-                </div>
-            </td>
+            <td><div style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${task['الموضوع/المهمة'] || '-'}">${highlightSearchTerm(task['الموضوع/المهمة'] || '-')}</div></td>
             <td>${task['الإدارة'] || '-'}</td>
-            <td>${task['المسؤول عن المهمه'] || '-'}</td>
-            <td>${formatDate(task['تاريخ  بدء المهمه'])}</td>
-            <td>${formatDate(task['التاريخ المتوقع لانهاء المهمة'])}</td>
+            <td class="d-none d-md-table-cell">${task['المسؤول عن المهمه'] || '-'}</td>
+            <td class="d-none d-lg-table-cell">${formatDate(task['تاريخ  بدء المهمه'])}</td>
+            <td class="d-none d-lg-table-cell">${formatDate(task['التاريخ المتوقع لانهاء المهمة'])}</td>
             <td>${createStatusBadge(task['الحالة'])}</td>
-            <td class="progress-bar-cell">${createProgressBar(task['نسبة التقدم'])}</td>
-            <td>
-                <div class="action-buttons">
-                    <button class="btn-action btn-view" onclick="viewTaskDetails(${startIndex + index})" title="عرض التفاصيل">
-                        <i class="fas fa-eye"></i>
-                    </button>
-                </div>
-            </td>
+            <td class="d-none d-md-table-cell progress-bar-cell">${createProgressBar(task['نسبة التقدم'])}</td>
+            <td><div class="action-buttons"><button class="btn-action btn-view" onclick="viewTaskDetails(${startIndex + index})" title="عرض التفاصيل"><i class="fas fa-eye"></i></button></div></td>
         `;
         tbody.appendChild(row);
     });
     
-    // عرض ترقيم الصفحات
     renderPagination();
 }
-
 // إنشاء شارة الحالة
 function createStatusBadge(status) {
     if (!status) return '<span class="status-badge">غير محدد</span>';
     
     let badgeClass = 'status-badge';
-    if (status.includes('مكتمل')) {
-        badgeClass += ' status-completed';
-    } else if (status.includes('متأخر')) {
-        badgeClass += ' status-delayed';
-    } else {
-        badgeClass += ' status-in-progress';
-    }
+    if (status.includes('مكتمل')) badgeClass += ' status-completed';
+    else if (status.includes('متأخر')) badgeClass += ' status-delayed';
+    else badgeClass += ' status-in-progress';
     
     return `<span class="${badgeClass}">${status}</span>`;
 }
@@ -314,18 +278,6 @@ function highlightSearchTerm(text) {
     return text.replace(regex, '<span class="highlight">$1</span>');
 }
 
-// تنسيق التاريخ
-function formatDate(dateString) {
-    if (!dateString) return '-';
-    
-    try {
-        const date = new Date(dateString);
-        return date.toLocaleDateString('ar-SA');
-    } catch (error) {
-        return dateString;
-    }
-}
-
 // عرض ترقيم الصفحات
 function renderPagination() {
     const pagination = document.getElementById('pagination');
@@ -335,13 +287,11 @@ function renderPagination() {
     
     const totalPages = Math.ceil(filteredData.length / pageSize);
     
-    // زر السابق
     const prevButton = document.createElement('li');
     prevButton.className = `page-item ${currentPage === 1 ? 'disabled' : ''}`;
     prevButton.innerHTML = `<a class="page-link" href="#" onclick="changePage(${currentPage - 1})">السابق</a>`;
     pagination.appendChild(prevButton);
     
-    // أرقام الصفحات
     const startPage = Math.max(1, currentPage - 2);
     const endPage = Math.min(totalPages, currentPage + 2);
     
@@ -352,7 +302,6 @@ function renderPagination() {
         pagination.appendChild(pageButton);
     }
     
-    // زر التالي
     const nextButton = document.createElement('li');
     nextButton.className = `page-item ${currentPage === totalPages ? 'disabled' : ''}`;
     nextButton.innerHTML = `<a class="page-link" href="#" onclick="changePage(${currentPage + 1})">التالي</a>`;
@@ -362,18 +311,16 @@ function renderPagination() {
 // تغيير الصفحة
 function changePage(page) {
     const totalPages = Math.ceil(filteredData.length / pageSize);
-    
     if (page < 1 || page > totalPages) return;
-    
     currentPage = page;
     renderTable();
 }
 
 // عرض تفاصيل المهمة
+// عرض تفاصيل المهمة
 function viewTaskDetails(index) {
     const task = filteredData[index];
     const modalBody = document.getElementById('taskModalBody');
-    
     modalBody.innerHTML = `
         <div class="task-detail-item">
             <span class="task-detail-label">الموضوع/المهمة:</span>
@@ -409,23 +356,20 @@ function viewTaskDetails(index) {
         </div>
         <div class="task-detail-item">
             <span class="task-detail-label">النسبة المستهدفة:</span>
-            <div class="task-detail-value">${Math.round((parseFloat(task['النسبة المستهدفة']) || 0) * 100)}%</div>
+            <div class="task-detail-value">${(parseFloat(task['النسبة المستهدفة']) * 100 || 0).toFixed(0)}%</div>
         </div>
         <div class="task-detail-item">
             <span class="task-detail-label">ملاحظات:</span>
             <div class="task-detail-value">${task['ملاحظات (ان وجدت)'] || 'لا توجد ملاحظات'}</div>
         </div>
     `;
-    
-    // عرض النافذة المنبثقة
     const modal = new bootstrap.Modal(document.getElementById('taskModal'));
     modal.show();
 }
-
 // تحديث معلومات النتائج
 function updateResultsInfo() {
     document.getElementById('currentResults').textContent = filteredData.length;
-    document.getElementById('totalResults').textContent = tableData ? tableData.tasks.length : 0;
+    document.getElementById('totalResults').textContent = filteredData.length;
 }
 
 // عرض حالة عدم وجود نتائج
@@ -447,7 +391,6 @@ function showNoDataState() {
     document.querySelector('.table-card').style.display = 'none';
     document.getElementById('noDataState').style.display = 'block';
     
-    // تغيير النص
     document.querySelector('.no-data-content h3').textContent = 'لا توجد بيانات';
     document.querySelector('.no-data-content p').textContent = 'يرجى العودة إلى الصفحة الرئيسية وتحميل ملف البيانات أولاً';
 }
@@ -456,7 +399,6 @@ function showNoDataState() {
 function exportToExcel() {
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(filteredData);
-    
     XLSX.utils.book_append_sheet(wb, ws, 'المهام');
     XLSX.writeFile(wb, 'مهام_الهيئة.xlsx');
 }
@@ -471,7 +413,7 @@ function printTable() {
     window.print();
 }
 
-// العودة للصفحة الرئيسية
+// العودة للرئيسية
 function goBack() {
     window.location.href = 'index.html';
 }
@@ -493,4 +435,3 @@ function debounce(func, wait) {
         timeout = setTimeout(later, wait);
     };
 }
-
