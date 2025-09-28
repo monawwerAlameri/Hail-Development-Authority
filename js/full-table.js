@@ -21,7 +21,7 @@ function excelSerialToDate(serial) {
     const day = String(date_info.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`; // عرض كما في الملف
 }
-// تنسيق التاريخ للعرض
+
 // تنسيق التاريخ للعرض (بدون تحويل إلى هجري)
 function formatDate(dateString) {
     return dateString || '-'; // الاحتفاظ بالقيمة الأصلية
@@ -33,7 +33,6 @@ document.addEventListener('DOMContentLoaded', function() {
     setupEventListeners();
 });
 
-// تهيئة الجدول
 // تهيئة الجدول
 function initializeTable() {
     const storedData = localStorage.getItem('excelData');
@@ -54,7 +53,18 @@ function initializeTable() {
             });
             filteredData = [...tableData.tasks];
             initializeFilters();
-            renderTable();
+            
+            // تطبيق الفلتر المحفوظ من لوحة المعلومات
+            const statusFilter = localStorage.getItem('taskStatusFilter');
+            if (statusFilter) {
+                document.getElementById('statusFilter').value = statusFilter;
+                applyFilters();
+                // إزالة الفلتر بعد تطبيقه لتجنب تطبيقه مرة أخرى عند تحديث الصفحة
+                localStorage.removeItem('taskStatusFilter');
+            } else {
+                renderTable();
+            }
+            
             updateResultsInfo();
         } catch (error) {
             console.error('خطأ في تحليل البيانات:', error);
@@ -136,16 +146,29 @@ function applyFilters() {
     const progressFilter = parseInt(document.getElementById('progressFilter').value) / 100;
     
     filteredData = tableData.tasks.filter(task => {
+        // فلتر البحث
         if (searchTerm && !task['الموضوع/المهمة'].toLowerCase().includes(searchTerm)) return false;
+        
+        // فلتر الإدارة
         if (departmentFilter && task['الإدارة'] !== departmentFilter) return false;
-        if (statusFilter && !task['الحالة'].includes(statusFilter)) return false;
+        
+        // فلتر الحالة - تعديل مهم هنا
+        if (statusFilter) {
+            const taskStatus = task['الحالة'] || '';
+            if (statusFilter === 'مكتمل' && !taskStatus.includes('مكتمل')) return false;
+            if (statusFilter === 'متأخر' && !taskStatus.includes('متأخر')) return false;
+            if (statusFilter === 'جاري العمل' && !taskStatus.includes('جاري')) return false;
+        }
+        
+        // فلتر المسؤول
         if (responsibleFilter && task['المسؤول عن المهمه'] !== responsibleFilter) return false;
         
-        // فلتر التاريخ (محول)
+        // فلتر التاريخ
         const taskStart = new Date(task['تاريخ  بدء المهمه']);
         if (startDateFrom && taskStart < new Date(startDateFrom)) return false;
         if (startDateTo && taskStart > new Date(startDateTo)) return false;
         
+        // فلتر نسبة التقدم
         const taskProgress = parseFloat(task['نسبة التقدم']) || 0;
         if (taskProgress < progressFilter) return false;
         
@@ -175,6 +198,10 @@ function clearFilters() {
     document.getElementById('startDateTo').value = '';
     document.getElementById('progressFilter').value = '0';
     document.getElementById('progressValue').textContent = '0%';
+    
+    // إزالة الفلتر المحفوظ من لوحة المعلومات
+    localStorage.removeItem('taskStatusFilter');
+    
     applyFilters();
 }
 
@@ -245,6 +272,7 @@ function renderTable() {
     
     renderPagination();
 }
+
 // إنشاء شارة الحالة
 function createStatusBadge(status) {
     if (!status) return '<span class="status-badge">غير محدد</span>';
@@ -317,7 +345,6 @@ function changePage(page) {
 }
 
 // عرض تفاصيل المهمة
-// عرض تفاصيل المهمة
 function viewTaskDetails(index) {
     const task = filteredData[index];
     const modalBody = document.getElementById('taskModalBody');
@@ -366,6 +393,7 @@ function viewTaskDetails(index) {
     const modal = new bootstrap.Modal(document.getElementById('taskModal'));
     modal.show();
 }
+
 // تحديث معلومات النتائج
 function updateResultsInfo() {
     document.getElementById('currentResults').textContent = filteredData.length;
