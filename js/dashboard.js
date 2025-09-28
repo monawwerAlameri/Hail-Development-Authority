@@ -419,11 +419,9 @@ function calculateSummary(tasks) {
 // دالة فلتر المهام عند النقر على الكارد
 function filterTasks(status) {
     if (status === 'total') {
-        localStorage.removeItem('filterStatus');
+        localStorage.removeItem('taskStatusFilter');
     } else {
-        localStorage.setItem('filterStatus', status);
+        localStorage.setItem('taskStatusFilter', status);
     }
     window.location.href = 'full-table.html';
 }
-
-
