@@ -1,6 +1,19 @@
 // متغيرات عامة
 let excelData = null;
 let processedData = null;
+const currentDateSerial = 45928; // التاريخ الحالي 2025-09-28 كتسلسلي (بناءً على الرسالة)
+
+// دالة تحويل تسلسلي Excel إلى تاريخ (YYYY-MM-DD)
+function excelSerialToDate(serial) {
+    if (isNaN(serial) || serial === '' || serial === 'مستمرة') return serial || '-';
+    const utc_days = Math.floor(serial - 25569);
+    const utc_value = utc_days * 86400;
+    const date_info = new Date(utc_value * 1000);
+    const year = date_info.getFullYear();
+    const month = String(date_info.getMonth() + 1).padStart(2, '0');
+    const day = String(date_info.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
 
 // عند تحميل الصفحة
 document.addEventListener('DOMContentLoaded', function() {
@@ -66,16 +79,11 @@ function showFileInfo(file) {
     const fileName = document.getElementById('fileName');
     const fileSize = document.getElementById('fileSize');
     const actionButtons = document.getElementById('actionButtons');
-    const uploadIcon = document.getElementById('uploadIcon');
     
     if (fileInfo && fileName && fileSize) {
-        // إعداد معلومات الملف
         fileName.textContent = file.name;
         fileSize.textContent = formatFileSize(file.size);
-        
         fileInfo.style.display = 'block';
-        
-        // إظهار الأزرار بعد تأخير قصير مع تأثير انيميشن
         setTimeout(() => {
             if (actionButtons) {
                 actionButtons.style.display = 'block';
@@ -89,31 +97,16 @@ function showFileInfo(file) {
 function hideFileInfo() {
     const fileInfo = document.getElementById('fileInfo');
     const actionButtons = document.getElementById('actionButtons');
-    const uploadIcon = document.getElementById('uploadIcon');
-    
-    if (fileInfo) {
-        fileInfo.style.display = 'none';
-    }
-    
-    if (actionButtons) {
-        actionButtons.style.display = 'none';
-    }
-    
-    // إعادة أيقونة الإكسل
-    if (uploadIcon) {
-        uploadIcon.innerHTML = '<i class="fas fa-file-excel"></i>';
-        uploadIcon.classList.remove('logo-replacement');
-    }
+    if (fileInfo) fileInfo.style.display = 'none';
+    if (actionButtons) actionButtons.style.display = 'none';
 }
 
 // تنسيق حجم الملف
 function formatFileSize(bytes) {
     if (bytes === 0) return '0 بايت';
-    
     const k = 1024;
     const sizes = ['بايت', 'كيلوبايت', 'ميجابايت', 'جيجابايت'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
@@ -131,13 +124,12 @@ function readExcelFile(file) {
             const worksheet = workbook.Sheets[firstSheetName];
             
             // تحويل إلى JSON
-            const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+            const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false });
             
             // معالجة البيانات
             processExcelData(jsonData);
             
             showSuccess('تم تحميل الملف بنجاح!');
-            
         } catch (error) {
             console.error('خطأ في قراءة الملف:', error);
             showError('حدث خطأ في قراءة الملف. يرجى التأكد من صحة الملف.');
@@ -173,14 +165,28 @@ function processExcelData(rawData) {
         
         // تنظيف البيانات
         const cleanedData = dataRows
-            .filter(row => row && row[0] && row[1]) // إزالة الصفوف الفارغة
+            .filter(row => row && row.length > 0 && row[0]) // إزالة الصفوف الفارغة تمامًا
             .map(row => {
                 const task = {};
                 headers.forEach((header, index) => {
                     if (header) {
-                        task[header] = row[index] || '';
+                        let value = row[index] || '';
+                        // تحويل التواريخ
+                        if (header === 'تاريخ  بدء المهمه' || header === 'التاريخ المتوقع لانهاء المهمة' || header === 'التاريخ الفعلي لانتهاء المهمة') {
+                            value = excelSerialToDate(value);
+                        }
+                        task[header] = value;
                     }
                 });
+                // حساب الحالة المتأخرة تلقائيًا
+                const expected = parseFloat(row[headers.indexOf('التاريخ المتوقع لانهاء المهمة')]);
+                if (!isNaN(expected) && expected < currentDateSerial && !task['الحالة'].includes('مكتمل')) {
+                    task['الحالة'] = 'متأخر';
+                }
+                // نسبة التقدم تلقائيًا
+                if (!task['نسبة التقدم']) {
+                    task['نسبة التقدم'] = task['الحالة'].includes('مكتمل') ? 1 : task['الحالة'].includes('جاري') ? 0.5 : 0.25;
+                }
                 return task;
             });
         
@@ -246,7 +252,7 @@ function calculateSummary(tasks) {
 // الانتقال إلى لوحة المعلومات
 function goToDashboard() {
     if (!processedData) {
-        showError('يرجى تحميل ملف البيانات أولاً');
+        showError('يرجى رفع ملف البيانات أولاً');
         return;
     }
     
@@ -280,7 +286,6 @@ function showInfo(message) {
 
 // عرض الإشعارات
 function showNotification(message, type = 'info') {
-    // إنشاء عنصر الإشعار
     const notification = document.createElement('div');
     notification.className = `notification notification-${type}`;
     notification.innerHTML = `
@@ -381,7 +386,7 @@ function getNotificationIcon(type) {
     return icons[type] || 'info-circle';
 }
 
-// تصدير البيانات (للاستخدام في ملفات أخرى)
+// تصدير البيانات للاستخدام في ملفات أخرى
 window.ExcelAnalyzer = {
     getData: () => processedData,
     setData: (data) => { processedData = data; }
