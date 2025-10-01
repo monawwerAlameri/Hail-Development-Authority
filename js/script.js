@@ -1,18 +1,21 @@
 // متغيرات عامة
 let excelData = null;
 let processedData = null;
-const currentDateSerial = 45928; // التاريخ الحالي 2025-09-28 كتسلسلي (بناءً على الرسالة)
+const currentDateSerial = 45928; // التاريخ الحالي 2025-09-28 كتسلسلي
 
 // دالة تحويل تسلسلي Excel إلى تاريخ (YYYY-MM-DD)
 function excelSerialToDate(serial) {
-    if (isNaN(serial) || serial === '' || serial === 'مستمرة') return serial || '-';
+    if (isNaN(serial) || serial === '' || serial === 'مستمرة' || /L\d+|A\d+/.test(serial)) {
+        return serial || '-'; // الاحتفاظ بالقيمة الأصلية إذا كانت غير عددية
+    }
     const utc_days = Math.floor(serial - 25569);
     const utc_value = utc_days * 86400;
     const date_info = new Date(utc_value * 1000);
+    if (isNaN(date_info.getTime())) return serial || '-'; // إذا كان التحويل غير صالح
     const year = date_info.getFullYear();
     const month = String(date_info.getMonth() + 1).padStart(2, '0');
     const day = String(date_info.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    return `${year}-${month}-${day}`; // عرض كما في الملف الأصلي (ميلادي)
 }
 
 // عند تحميل الصفحة
@@ -178,15 +181,39 @@ function processExcelData(rawData) {
                         task[header] = value;
                     }
                 });
-                // حساب الحالة المتأخرة تلقائيًا
-                const expected = parseFloat(row[headers.indexOf('التاريخ المتوقع لانهاء المهمة')]);
-                if (!isNaN(expected) && expected < currentDateSerial && !task['الحالة'].includes('مكتمل')) {
+                
+                // تحديد الحالة بشكل صحيح بناءً على البيانات الفعلية
+                const status = task['الحالة'] || '';
+                const expectedDate = task['التاريخ المتوقع لانهاء المهمة'];
+                const actualDate = task['التاريخ الفعلي لانتهاء المهمة'];
+                
+                // إذا كانت الحالة محددة مسبقًا، احتفظ بها
+                if (status && status !== '-') {
+                    task['الحالة'] = status;
+                } 
+                // إذا لم تكن الحالة محددة، حددها بناءً على التواريخ
+                else if (expectedDate !== 'مستمرة' && expectedDate !== '-' && 
+                         new Date(expectedDate) < new Date() && (!actualDate || actualDate === '-')) {
                     task['الحالة'] = 'متأخر';
+                } else if (actualDate && actualDate !== '-') {
+                    task['الحالة'] = 'مكتمل';
+                } else {
+                    task['الحالة'] = 'جاري العمل';
                 }
+                
                 // نسبة التقدم تلقائيًا
                 if (!task['نسبة التقدم']) {
-                    task['نسبة التقدم'] = task['الحالة'].includes('مكتمل') ? 1 : task['الحالة'].includes('جاري') ? 0.5 : 0.25;
+                    if (task['الحالة'].includes('مكتمل')) {
+                        task['نسبة التقدم'] = 1;
+                    } else if (task['الحالة'].includes('جاري')) {
+                        task['نسبة التقدم'] = 0.5;
+                    } else if (task['الحالة'] === 'متأخر') {
+                        task['نسبة التقدم'] = 0.25;
+                    } else {
+                        task['نسبة التقدم'] = 0;
+                    }
                 }
+                
                 return task;
             });
         
@@ -217,6 +244,24 @@ function calculateSummary(tasks) {
         responsiblePersons: new Set()
     };
     
+    // قائمة الأسماء المسموح بها فقط
+    const allowedNames = [
+        'ابراهيم البدر',
+        'محمد الطواله',
+        'علي حكمي',
+        'عبداللطيف الهمشي',
+        'تركي الباتع',
+        'سعد البطي'
+    ];
+    
+    // قائمة الإدارات المسموح بها فقط
+    const allowedDepartments = [
+        'الإدارة العامة للتميز المؤسسي',
+        'إدارة الجودة الشاملة',
+        'ادارة تميز الاعمال',
+        'وحدة البحث والابتكار'
+    ];
+    
     tasks.forEach(task => {
         // حساب حالات المهام
         const status = task['الحالة'] || '';
@@ -228,18 +273,35 @@ function calculateSummary(tasks) {
             summary.inProgressTasks++;
         }
         
-        // جمع الإدارات والمسؤولين
+        // جمع الإدارات مع التحقق من القائمة المسموح بها
         if (task['الإدارة']) {
-            summary.departments.add(task['الإدارة']);
+            // تطبيع اسم الإدارة للمقارنة
+            const deptName = task['الإدارة'].trim();
+            if (allowedDepartments.some(allowed => deptName.includes(allowed.split(' ')[0]) || allowed.includes(deptName))) {
+                summary.departments.add(deptName);
+            }
         }
+        
+        // جمع المسؤولين مع التحقق من القائمة المسموح بها
         if (task['المسؤول عن المهمه']) {
-            summary.responsiblePersons.add(task['المسؤول عن المهمه']);
+            // استخراج الاسم الأساسي فقط (بدون ألقاب)
+            const nameParts = task['المسؤول عن المهمه'].split(' ');
+            const firstName = nameParts[0];
+            const secondName = nameParts.length > 1 ? nameParts[1] : '';
+            
+            // التحقق من أن الاسم في القائمة المسموح بها
+            if (allowedNames.some(allowedName => {
+                const allowedParts = allowedName.split(' ');
+                return firstName === allowedParts[0] && (!allowedParts[1] || secondName === allowedParts[1]);
+            })) {
+                summary.responsiblePersons.add(firstName + ' ' + secondName);
+            }
         }
     });
     
-    // تحويل Sets إلى arrays
-    summary.departments = Array.from(summary.departments);
-    summary.responsiblePersons = Array.from(summary.responsiblePersons);
+    // تحويل Sets إلى arrays وترتيبها
+    summary.departments = Array.from(summary.departments).sort();
+    summary.responsiblePersons = Array.from(summary.responsiblePersons).sort();
     
     // حساب نسبة الإنجاز
     summary.completionRate = summary.totalTasks > 0 
