@@ -5,7 +5,7 @@ let currentPage = 1;
 let pageSize = 25;
 let sortColumn = null;
 let sortDirection = 'asc';
-const currentDateSerial = 45928; // 2025-09-28
+const currentDateSerial = 45931; // 2025-10-01
 
 // دالة تحويل تسلسلي إلى تاريخ
 function excelSerialToDate(serial) {
@@ -44,11 +44,27 @@ function initializeTable() {
                 task['التاريخ المتوقع لانهاء المهمة'] = excelSerialToDate(task['التاريخ المتوقع لانهاء المهمة']);
                 task['التاريخ الفعلي لانتهاء المهمة'] = excelSerialToDate(task['التاريخ الفعلي لانتهاء المهمة']);
                 const expectedSerial = parseFloat(task['التاريخ المتوقع لانهاء المهمة']);
-                if (!isNaN(expectedSerial) && expectedSerial < currentDateSerial && !task['الحالة'].includes('مكتمل')) {
-                    task['الحالة'] = 'متأخر';
+                let status = task['الحالة'] || '';
+                const actualDate = task['التاريخ الفعلي لانتهاء المهمة'];
+                
+                if (status.includes('التسليم اليوم')) {
+                    status = 'متأخر';
                 }
+                
+                if (!status || status === '-') {
+                    if (!isNaN(expectedSerial) && expectedSerial < currentDateSerial && (!actualDate || actualDate === '-')) {
+                        status = 'متأخر';
+                    } else if (actualDate && actualDate !== '-') {
+                        status = 'مكتمل';
+                    } else {
+                        status = 'جاري العمل';
+                    }
+                }
+                
+                task['الحالة'] = status;
+                
                 if (!task['نسبة التقدم']) {
-                    task['نسبة التقدم'] = task['الحالة'].includes('مكتمل') ? 1 : task['الحالة'].includes('جاري') ? 0.5 : 0;
+                    task['نسبة التقدم'] = status.includes('مكتمل') ? 1 : status.includes('جاري') ? 0.5 : 0;
                 }
             });
             filteredData = [...tableData.tasks];
@@ -117,21 +133,45 @@ function initializeFilters() {
     const departmentFilter = document.getElementById('departmentFilter');
     const departments = [...new Set(tableData.tasks.map(task => task['الإدارة']).filter(dept => dept))];
     
-    departments.forEach(dept => {
-        const option = document.createElement('option');
-        option.value = dept;
-        option.textContent = dept;
-        departmentFilter.appendChild(option);
+    // قائمة الإدارات المسموح بها فقط
+    const allowedDepartments = [
+        'الإدارة العامة للتميز المؤسسي',
+        'إدارة الجودة الشاملة',
+        'إدارة تميز الأعمال',
+        'وحدة البحث والابتكار'
+    ];
+    
+    // إضافة الإدارات المسموح بها فقط دون تكرار
+    allowedDepartments.forEach(dept => {
+        if (departments.some(d => d.includes(dept.split(' ')[0]) || d === dept)) {
+            const option = document.createElement('option');
+            option.value = dept;
+            option.textContent = dept;
+            departmentFilter.appendChild(option);
+        }
     });
     
     const responsibleFilter = document.getElementById('responsibleFilter');
     const responsiblePersons = [...new Set(tableData.tasks.map(task => task['المسؤول عن المهمه']).filter(person => person))];
     
-    responsiblePersons.forEach(person => {
-        const option = document.createElement('option');
-        option.value = person;
-        option.textContent = person;
-        responsibleFilter.appendChild(option);
+    // قائمة الأسماء المسموح بها فقط
+    const allowedNames = [
+        'ابراهيم البدر',
+        'محمد الطواله',
+        'علي حكمي',
+        'عبداللطيف الهمشي',
+        'تركي الباتع',
+        'سعد البطي'
+    ];
+    
+    // إضافة الأسماء المسموح بها فقط دون تكرار
+    allowedNames.forEach(name => {
+        if (responsiblePersons.some(person => person.includes(name.split(' ')[0]))) {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            responsibleFilter.appendChild(option);
+        }
     });
 }
 
@@ -152,16 +192,16 @@ function applyFilters() {
         // فلتر الإدارة
         if (departmentFilter && task['الإدارة'] !== departmentFilter) return false;
         
-        // فلتر الحالة - تعديل مهم هنا
+        // فلتر الحالة - معاملة "التسليم اليوم" كمتأخر
         if (statusFilter) {
             const taskStatus = task['الحالة'] || '';
             if (statusFilter === 'مكتمل' && !taskStatus.includes('مكتمل')) return false;
-            if (statusFilter === 'متأخر' && !taskStatus.includes('متأخر')) return false;
-            if (statusFilter === 'جاري العمل' && !taskStatus.includes('جاري')) return false;
+            if (statusFilter === 'متأخر' && !taskStatus.includes('متأخر') && !taskStatus.includes('التسليم اليوم')) return false;
+            if (statusFilter === 'جاري العمل' && !taskStatus.includes('جاري') && taskStatus !== 'مستمرة') return false;
         }
         
         // فلتر المسؤول
-        if (responsibleFilter && task['المسؤول عن المهمه'] !== responsibleFilter) return false;
+        if (responsibleFilter && !task['المسؤول عن المهمه'].includes(responsibleFilter)) return false;
         
         // فلتر التاريخ
         const taskStart = new Date(task['تاريخ  بدء المهمه']);
@@ -279,7 +319,7 @@ function createStatusBadge(status) {
     
     let badgeClass = 'status-badge';
     if (status.includes('مكتمل')) badgeClass += ' status-completed';
-    else if (status.includes('متأخر')) badgeClass += ' status-delayed';
+    else if (status.includes('متأخر') || status.includes('التسليم اليوم')) badgeClass += ' status-delayed';
     else badgeClass += ' status-in-progress';
     
     return `<span class="${badgeClass}">${status}</span>`;
