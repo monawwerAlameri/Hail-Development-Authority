@@ -2,7 +2,7 @@
 let dashboardData = null;
 let statusChart = null;
 let departmentChart = null;
-const currentDateSerial = 45928; // التاريخ الحالي: 2025-09-28 (بناءً على الرسالة)
+const currentDateSerial = 45931; // التاريخ الحالي: 2025-10-01 (مصحح بناءً على التاريخ الحالي)
 
 // دالة تحويل تسلسلي Excel إلى تاريخ (YYYY-MM-DD)
 function excelSerialToDate(serial) {
@@ -36,15 +36,30 @@ function initializeDashboard() {
                 task['التاريخ المتوقع لانهاء المهمة'] = excelSerialToDate(task['التاريخ المتوقع لانهاء المهمة']);
                 task['التاريخ الفعلي لانتهاء المهمة'] = excelSerialToDate(task['التاريخ الفعلي لانتهاء المهمة']);
                 
-                // حساب متأخر بدقة
+                // حساب متأخر بدقة، ومعاملة "التسليم اليوم" كمتأخر
+                let status = task['الحالة'] || '';
                 const expectedSerial = parseFloat(task['التاريخ المتوقع لانهاء المهمة']);
-                if (!isNaN(expectedSerial) && expectedSerial < currentDateSerial && !task['الحالة'].includes('مكتمل')) {
-                    task['الحالة'] = 'متأخر';
+                const actualDate = task['التاريخ الفعلي لانتهاء المهمة'];
+                
+                if (status.includes('التسليم اليوم')) {
+                    status = 'متأخر';
                 }
+                
+                if (!status || status === '-') {
+                    if (!isNaN(expectedSerial) && expectedSerial < currentDateSerial && (!actualDate || actualDate === '-')) {
+                        status = 'متأخر';
+                    } else if (actualDate && actualDate !== '-') {
+                        status = 'مكتمل';
+                    } else {
+                        status = 'جاري العمل';
+                    }
+                }
+                
+                task['الحالة'] = status;
                 
                 // نسبة التقدم تلقائيًا
                 if (!task['نسبة التقدم']) {
-                    task['نسبة التقدم'] = task['الحالة'].includes('مكتمل') ? 1 : task['الحالة'].includes('جاري') ? 0.5 : 0.25;
+                    task['نسبة التقدم'] = status.includes('مكتمل') ? 1 : status.includes('جاري') ? 0.5 : 0.25;
                 }
             });
             dashboardData.summary = calculateSummary(dashboardData.tasks);
@@ -256,20 +271,11 @@ function updateInfoLists() {
     const responsibleList = document.getElementById('responsibleList');
     responsibleList.innerHTML = '';
     
-    const responsiblePersons = dashboardData.summary.responsiblePersons.slice(0, 10);
-    responsiblePersons.forEach(person => {
+    dashboardData.summary.responsiblePersons.forEach(person => {
         const li = document.createElement('li');
         li.textContent = person;
         responsibleList.appendChild(li);
     });
-    
-    if (dashboardData.summary.responsiblePersons.length > 10) {
-        const li = document.createElement('li');
-        li.textContent = `... و ${dashboardData.summary.responsiblePersons.length - 10} آخرين`;
-        li.style.fontStyle = 'italic';
-        li.style.color = '#6c757d';
-        responsibleList.appendChild(li);
-    }
 }
 
 // تحديث معاينة الجدول
@@ -287,6 +293,8 @@ function updateTablePreview() {
             row.classList.add('highlight-yellow');
         } else if (taskName.includes('خطة صرف')) {
             row.classList.add('highlight-orange');
+        } else if (taskName.includes('27001') || taskName.includes('الأمن السيبراني')) {
+            row.classList.add('highlight-blue');
         }
         
         const taskCell = document.createElement('td');
@@ -389,33 +397,90 @@ window.addEventListener('resize', function() {
     }
 });
 
+// دالة حساب الملخص (تصحيح الإحصائيات بناءً على القيم المحددة)
 // دالة حساب الملخص (تصحيح الإحصائيات)
 function calculateSummary(tasks) {
     const summary = {
-        totalTasks: 263, // تم التحديث بناءً على القيم الصحيحة
-        completedTasks: 203, // تم التحديث بناءً على القيم الصحيحة
-        delayedTasks: 8, // تم التحديث بناءً على القيم الصحيحة
-        inProgressTasks: 44, // تم التحديث بناءً على القيم الصحيحة
+        totalTasks: 0, // سيتم حسابه من البيانات
+        completedTasks: 0, // سيتم حسابه من البيانات
+        delayedTasks: 0, // سيتم حسابه من البيانات
+        inProgressTasks: 0, // سيتم حسابه من البيانات
         departments: new Set(),
         responsiblePersons: new Set()
     };
     
+    // قائمة الإدارات المسموح بها فقط
+    const allowedDepartments = [
+        'الإدارة العامة للتميز المؤسسي',
+        'إدارة الجودة الشاملة',
+        'ادارة تميز الاعمال',
+        'وحدة البحث والابتكار'
+    ];
+    
+    // قائمة الأسماء المسموح بها فقط
+    const allowedNames = [
+        'ابراهيم البدر',
+        'محمد الطواله',
+        'علي حكمي',
+        'عبداللطيف الهمشي',
+        'تركي الباتع',
+        'سعد البطي'
+    ];
+    
     tasks.forEach(task => {
-        if (task['الإدارة']) {
-            summary.departments.add(task['الإدارة']);
+        // حساب الإجمالي
+        summary.totalTasks++;
+        
+        // حساب حالات المهام
+        const status = task['الحالة'] || '';
+        if (status.includes('مكتمل')) {
+            summary.completedTasks++;
+        } else if (status.includes('متأخر')) {
+            summary.delayedTasks++;
+        } else if (status.includes('جاري')) {
+            summary.inProgressTasks++;
         }
+        
+        // جمع الإدارات مع التحقق من القائمة المسموح بها
+        if (task['الإدارة']) {
+            const deptName = task['الإدارة'].trim();
+            if (allowedDepartments.some(allowed => 
+                deptName.includes(allowed.split(' ')[0]) || 
+                allowed.includes(deptName)
+            )) {
+                summary.departments.add(deptName);
+            }
+        }
+        
+        // جمع المسؤولين مع التحقق من القائمة المسموح بها
         if (task['المسؤول عن المهمه']) {
-            summary.responsiblePersons.add(task['المسؤول عن المهمه']);
+            const respName = task['المسؤول عن المهمه'].trim();
+            
+            // البحث عن تطابق مع أي اسم من القائمة المسموح بها
+            const matchedName = allowedNames.find(allowedName => {
+                // تقسيم الاسم المسموح به إلى أجزاء
+                const nameParts = allowedName.split(' ');
+                
+                // التحقق من أن جميع أجزاء الاسم موجودة في اسم المسؤول
+                return nameParts.every(part => 
+                    respName.includes(part)
+                );
+            });
+            
+            // إذا وجد تطابق، أضف الاسم الأساسي (من القائمة المسموح بها)
+            if (matchedName) {
+                summary.responsiblePersons.add(matchedName);
+            }
         }
     });
     
-    summary.departments = Array.from(summary.departments);
-    summary.responsiblePersons = Array.from(summary.responsiblePersons);
+    // تحويل Sets إلى arrays وترتيبها
+    summary.departments = Array.from(summary.departments).sort();
+    summary.responsiblePersons = Array.from(summary.responsiblePersons).sort();
     summary.completionRate = summary.totalTasks > 0 ? Math.round((summary.completedTasks / summary.totalTasks) * 100) : 0;
     
     return summary;
 }
-
 // دالة فلتر المهام عند النقر على الكارد
 function filterTasks(status) {
     if (status === 'total') {
